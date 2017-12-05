@@ -29,7 +29,7 @@ fi
 
 for trgt in $targets; do
   echo building $trgt with nix
-  nix-build -A $trgt -o $trgt.root --argstr gitrev $BUILDKITE_COMMIT
+  nix-build -A $trgt -o $trgt.root --argstr gitrev dummy-constant #$BUILDKITE_COMMIT
 #    TODO: CSL-1133
 #    if [[ "$trgt" == "cardano-sl" ]]; then
 #      stack test --nix --fast --jobs=2 --coverage \
