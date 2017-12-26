@@ -6,15 +6,17 @@ module Pos.Block.Network.Announce
        ( announceBlock
        , announceBlockOuts
        , handleHeadersCommunication
+       , tempMeasure
        ) where
 
 import           Universum
 
 import           Control.Monad.Except       (runExceptT)
+import           Data.Time                  (diffUTCTime, getCurrentTime)
 import           Ether.Internal             (HasLens (..))
 import           Formatting                 (build, sformat, (%))
 import           Mockable                   (throw)
-import           System.Wlog                (logDebug, logWarning)
+import           System.Wlog                (WithLogger, logDebug, logNotice, logWarning)
 
 import           Pos.Block.Core             (Block, BlockHeader, MainBlockHeader,
                                              blockHeader)
@@ -34,6 +36,16 @@ import           Pos.Security               (AttackType (..), NodeAttackedError 
                                              SecurityParams (..), shouldIgnoreAddress)
 import           Pos.Util.TimeWarp          (nodeIdToAddress)
 import           Pos.WorkMode.Class         (WorkMode)
+
+tempMeasure :: (MonadIO m, WithLogger m) => Text -> m a -> m a
+tempMeasure label action = do
+    before <- liftIO getCurrentTime
+    x <- action
+    after <- liftIO getCurrentTime
+    let d :: Integer
+        d = round $ 1000 * toRational (after `diffUTCTime` before)
+    logNotice $ "tempMeasure " <> label <> ": " <> show d
+    pure x
 
 announceBlockOuts :: OutSpecs
 announceBlockOuts = toOutSpecs [convH (Proxy :: Proxy (MsgHeaders ssc))
@@ -70,15 +82,18 @@ handleHeadersCommunication
 handleHeadersCommunication conv = do
     whenJustM (recvLimited conv) $ \mgh@(MsgGetHeaders {..}) -> do
         logDebug $ sformat ("Got request on handleGetHeaders: "%build) mgh
-        ifM recoveryInProgress onRecovery $ do
+        ifM recoveryInProgress onRecovery $ tempMeasure "handleGetHeaders" $ do
             headers <- case (mghFrom,mghTo) of
                 ([], Nothing) -> Right . one <$> getLastMainHeader
                 ([], Just h)  ->
                     maybeToRight "getBlockHeader returned Nothing" . fmap one <$>
                     DB.blkGetHeader @ssc h
                 (c1:cxs, _)   ->
-                    first ("getHeadersFromManyTo: " <>) <$>
-                    runExceptT (getHeadersFromManyTo (c1:|cxs) mghTo)
+                    tempMeasure "getHeadersFromManyTo" $ do
+                      (!r) <- first ("getHeadersFromManyTo: " <>) <$>
+                             runExceptT (getHeadersFromManyTo (c1:|cxs) mghTo)
+                      !() <- deepseq r $ logDebug "a"
+                      pure r
             either onNoHeaders handleSuccess headers
   where
     -- retrieves header of the newest main block if there's any,
@@ -91,9 +106,8 @@ handleHeadersCommunication conv = do
             Left _  -> fromMaybe tipHeader <$> DB.blkGetHeader (tip ^. prevBlockL)
             Right _ -> pure tipHeader
     handleSuccess h = do
-        send conv (MsgHeaders h)
+        tempMeasure "handleGetHeadersResponse" $ send conv (MsgHeaders h)
         logDebug "handleGetHeaders: responded successfully"
-        handleHeadersCommunication conv
     onNoHeaders reason = do
         let err = "handleGetHeaders: couldn't retrieve headers, reason: " <> reason
         logWarning err

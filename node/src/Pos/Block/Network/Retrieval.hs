@@ -28,7 +28,7 @@ import           Pos.Binary.Class           (biSize)
 import           Pos.Binary.Communication   ()
 import           Pos.Block.Core             (Block, BlockHeader, blockHeader)
 import           Pos.Block.Logic            (ClassifyHeaderRes (..), classifyNewHeader)
-import           Pos.Block.Network.Announce (announceBlockOuts)
+import           Pos.Block.Network.Announce (announceBlockOuts, tempMeasure)
 import           Pos.Block.Network.Logic    (BlockNetLogicException (DialogUnexpected),
                                              MkHeadersRequestResult (..), handleBlocks,
                                              mkBlocksRequest, mkHeadersRequest,
@@ -46,8 +46,8 @@ import           Pos.Core                   (HasHeaderHash (..), HeaderHash, dif
                                              isMoreDifficult, prevBlockL)
 import           Pos.Crypto                 (shortHashF)
 import           Pos.Reporting              (reportOrLogE, reportOrLogW)
-import           Pos.Slotting.Util          (getCurrentEpochSlotDuration)
 import           Pos.Shutdown               (runIfNotShutdown)
+import           Pos.Slotting.Util          (getCurrentEpochSlotDuration)
 import           Pos.Ssc.Class              (SscWorkersClass)
 import           Pos.Util                   (_neHead, _neLast)
 import           Pos.Util.Chrono            (NE, NewestFirst (..), OldestFirst (..),
@@ -107,7 +107,7 @@ retrievalWorkerImpl keepAliveTimer SendActions {..} =
         slotDuration <- fromIntegral . toMicroseconds <$> getCurrentEpochSlotDuration
         setTimerDuration keepAliveTimer $ 3 * slotDuration
         startTimer keepAliveTimer
-        thingToDoNext
+        tempMeasure "mainLoopGeneral" thingToDoNext
         mainLoop
     mainLoopE e = do
         -- REPORT:ERROR 'reportOrLogE' in block retrieval worker.
@@ -294,7 +294,7 @@ handleCHsValid
     -> BlockHeader ssc
     -> HeaderHash
     -> m ()
-handleCHsValid enqueue nodeId lcaChild newestHash = do
+handleCHsValid enqueue nodeId lcaChild newestHash = tempMeasure "handleCHsValid" $ do
     -- The conversation will attempt to retrieve the necessary blocks and apply
     -- them. Each one gives a 'Bool' where 'True' means that a recovery was
     -- completed (depends upon the state of the recovery-mode TMVar).
